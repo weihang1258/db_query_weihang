@@ -96,6 +96,7 @@ export const MetadataTree: React.FC<MetadataTreeProps> = ({
         children: buildTreeData(views, "view"),
       },
     ],
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- buildTreeData/filterItems are recreated each render; deps cover their inputs
     [tables, views, searchText]
   );
 

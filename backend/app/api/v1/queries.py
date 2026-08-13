@@ -186,6 +186,9 @@ async def export_query_result(
             "Content-Disposition": f'attachment; filename="{filename}"',
         },
     )
+
+
+@router.get("/{name}/history", response_model=List[QueryHistoryEntry])
 async def get_query_history_for_database(
     name: str,
     limit: int = 50,

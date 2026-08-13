@@ -3,6 +3,7 @@
 import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
 from app.services.nl2sql import NaturalLanguageToSQLService
+from app.config import settings
 
 
 @pytest.fixture
@@ -127,8 +128,8 @@ class TestGenerateSql:
             assert result["sql"] == "SELECT * FROM public.users LIMIT 100"
             assert "Show me all users" in result["explanation"]
 
-            # Verify OpenAI call parameters
-            assert call_args.kwargs["model"] == "gpt-4o-mini"
+            # Verify OpenAI call parameters (model comes from settings)
+            assert call_args.kwargs["model"] == settings.openai_model
 
     @pytest.mark.asyncio
     async def test_generate_sql_removes_markdown(self, nl2sql_service, sample_metadata):

@@ -59,6 +59,7 @@ export const Home: React.FC = () => {
     if (selectedDatabase) {
       loadMetadata();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reload metadata when db changes
   }, [selectedDatabase]);
 
   const loadMetadata = async () => {
@@ -70,8 +71,8 @@ export const Home: React.FC = () => {
         `/api/v1/dbs/${selectedDatabase}`
       );
       setMetadata(response.data);
-    } catch (error) {
-      console.error("Failed to load metadata:", error);
+    } catch (error: any) {
+      console.error("Failed to load metadata:", error?.message || error);
       message.error("Failed to load database metadata");
     } finally {
       setLoading(false);
@@ -138,7 +139,7 @@ export const Home: React.FC = () => {
       await apiClient.post(`/api/v1/dbs/${selectedDatabase}/refresh`);
       message.success("Metadata refreshed");
       loadMetadata();
-    } catch (error: any) {
+    } catch {
       message.error("Failed to refresh metadata");
     }
   };

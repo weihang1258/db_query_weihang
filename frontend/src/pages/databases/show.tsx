@@ -49,6 +49,7 @@ export const DatabaseShow: React.FC = () => {
 
   useEffect(() => {
     loadMetadata(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- load once per db id
   }, [id]);
 
   const loadMetadata = async (forceRefresh: boolean) => {
@@ -60,8 +61,8 @@ export const DatabaseShow: React.FC = () => {
         `/api/v1/dbs/${id}${forceRefresh ? "?refresh=true" : ""}`
       );
       setMetadata(response.data);
-    } catch (error) {
-      console.error("Failed to load metadata:", error);
+    } catch (error: any) {
+      console.error("Failed to load metadata:", error?.message || error);
       message.error("Failed to load database metadata");
     } finally {
       setLoading(false);

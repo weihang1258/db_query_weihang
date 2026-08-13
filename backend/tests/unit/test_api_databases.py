@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 from sqlmodel import Session, SQLModel, create_engine, select
 from app.main import app
 from app.database import get_session
-from app.models.database import DatabaseConnection, ConnectionStatus
+from app.models.database import DatabaseConnection, ConnectionStatus, DatabaseType
 from app.models.metadata import DatabaseMetadata
 from app.models.query import QueryHistory, QuerySource
 import json
@@ -65,11 +65,11 @@ def sample_connection(test_session):
 class TestCreateDatabaseConnection:
     """Test creating database connections."""
 
-    @patch("app.api.v1.databases.test_connection")
-    def test_create_database_connection(self, mock_test_conn, client):
+    @patch("app.api.v1.databases.database_service")
+    def test_create_database_connection(self, mock_service, client):
         """Test creating a new database connection successfully."""
-        # Mock successful connection test
-        mock_test_conn.return_value = (True, None)
+        # Mock successful connection test (async)
+        mock_service.test_connection = AsyncMock(return_value=(True, None))
 
         response = client.put(
             "/api/v1/dbs/my_database",
@@ -88,11 +88,13 @@ class TestCreateDatabaseConnection:
         assert "createdAt" in data
         assert "updatedAt" in data
 
-        # Verify test_connection was called
-        mock_test_conn.assert_called_once_with("postgresql://user:pass@localhost/mydb")
+        # Verify test_connection was called with (db_type, url)
+        mock_service.test_connection.assert_called_once()
+        call_args = mock_service.test_connection.call_args[0]
+        assert call_args[1] == "postgresql://user:pass@localhost/mydb"
 
-    @patch("app.api.v1.databases.test_connection")
-    def test_create_database_connection_invalid_name(self, mock_test_conn, client):
+    @patch("app.api.v1.databases.database_service")
+    def test_create_database_connection_invalid_name(self, mock_service, client):
         """Test that invalid database names are rejected."""
         response = client.put(
             "/api/v1/dbs/invalid@name!",
@@ -102,11 +104,11 @@ class TestCreateDatabaseConnection:
         assert response.status_code == 400
         assert "alphanumeric" in response.json()["detail"]
 
-    @patch("app.api.v1.databases.test_connection")
-    def test_create_database_connection_test_fails(self, mock_test_conn, client):
+    @patch("app.api.v1.databases.database_service")
+    def test_create_database_connection_test_fails(self, mock_service, client):
         """Test that connection creation fails when connection test fails."""
-        # Mock failed connection test
-        mock_test_conn.return_value = (False, "Connection refused")
+        # Mock failed connection test (async)
+        mock_service.test_connection = AsyncMock(return_value=(False, "Connection refused"))
 
         response = client.put(
             "/api/v1/dbs/failing_db",
@@ -117,11 +119,11 @@ class TestCreateDatabaseConnection:
         assert "Connection test failed" in response.json()["detail"]
         assert "Connection refused" in response.json()["detail"]
 
-    @patch("app.api.v1.databases.test_connection")
-    def test_update_existing_database_connection(self, mock_test_conn, client, sample_connection):
+    @patch("app.api.v1.databases.database_service")
+    def test_update_existing_database_connection(self, mock_service, client, sample_connection):
         """Test updating an existing database connection."""
-        # Mock successful connection test
-        mock_test_conn.return_value = (True, None)
+        # Mock successful connection test (async)
+        mock_service.test_connection = AsyncMock(return_value=(True, None))
 
         response = client.put(
             "/api/v1/dbs/test_db",
@@ -137,10 +139,10 @@ class TestCreateDatabaseConnection:
         assert data["url"] == "postgresql://newuser:newpass@localhost/newdb"
         assert data["description"] == "Updated description"
 
-    @patch("app.api.v1.databases.test_connection")
-    def test_create_database_connection_with_hyphen_underscore(self, mock_test_conn, client):
+    @patch("app.api.v1.databases.database_service")
+    def test_create_database_connection_with_hyphen_underscore(self, mock_service, client):
         """Test that names with hyphens and underscores are allowed."""
-        mock_test_conn.return_value = (True, None)
+        mock_service.test_connection = AsyncMock(return_value=(True, None))
 
         response = client.put(
             "/api/v1/dbs/test-db_name",
@@ -269,15 +271,19 @@ class TestGetDatabaseMetadata:
 class TestDeleteDatabase:
     """Test deleting database connections."""
 
-    @patch("app.api.v1.databases.close_connection_pool")
-    def test_delete_database(self, mock_close_pool, client, sample_connection):
+    @patch("app.api.v1.databases.database_service")
+    def test_delete_database(self, mock_service, client, sample_connection):
         """Test deleting a database connection."""
+        mock_service.close_connection = AsyncMock()
+
         response = client.delete("/api/v1/dbs/test_db")
 
         assert response.status_code == 204
 
-        # Verify connection pool was closed
-        mock_close_pool.assert_called_once_with("test_db")
+        # Verify connection pool was closed (db_type, name)
+        mock_service.close_connection.assert_called_once_with(
+            DatabaseType.POSTGRESQL, "test_db"
+        )
 
         # Verify database was deleted
         get_response = client.get("/api/v1/dbs")

@@ -24,6 +24,7 @@ export const QueryExecute: React.FC = () => {
     if (databaseName) {
       loadHistory();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reload history when db changes
   }, [databaseName]);
 
   const loadHistory = async () => {
@@ -35,8 +36,8 @@ export const QueryExecute: React.FC = () => {
         `/api/v1/dbs/${databaseName}/history`
       );
       setHistory(response.data);
-    } catch (err) {
-      console.error("Failed to load history:", err);
+    } catch {
+      console.error("Failed to load history");
     } finally {
       setLoadingHistory(false);
     }

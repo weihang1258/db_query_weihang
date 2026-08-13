@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 from sqlmodel import Session, SQLModel, create_engine, select
 from app.main import app
 from app.database import get_session
-from app.models.database import DatabaseConnection, ConnectionStatus
+from app.models.database import DatabaseConnection, ConnectionStatus, DatabaseType
 from app.models.query import QueryHistory, QuerySource
 from app.models.metadata import DatabaseMetadata
 from app.models.schemas import QueryResult, QueryColumn
@@ -102,7 +102,7 @@ def sample_metadata(test_session):
 class TestExecuteSqlQuery:
     """Test SQL query execution endpoint."""
 
-    @patch("app.api.v1.queries.execute_query")
+    @patch("app.api.v1.queries.execute_query_with_service")
     def test_execute_sql_query_success(self, mock_execute, client, sample_connection):
         """Test successful SQL query execution."""
         # Mock query result
@@ -135,13 +135,13 @@ class TestExecuteSqlQuery:
         assert data["rows"][0]["name"] == "Alice"
         assert data["executionTimeMs"] == 25
 
-        # Verify execute_query was called with correct parameters
+        # Verify execute_query_with_service was called with correct parameters
         mock_execute.assert_called_once()
         call_args = mock_execute.call_args[0]  # Positional args
-        # Args: session, database_name, url, sql, query_source
+        # Args: session, database_name, db_type, url, sql, query_source
         assert call_args[1] == "test_db"  # database_name
-        assert call_args[3] == "SELECT * FROM users"  # sql
-        assert call_args[4] == QuerySource.MANUAL  # query_source
+        assert call_args[4] == "SELECT * FROM users"  # sql
+        assert call_args[5] == QuerySource.MANUAL  # query_source
 
     def test_execute_sql_query_database_not_found(self, client):
         """Test query execution when database doesn't exist."""
@@ -153,7 +153,7 @@ class TestExecuteSqlQuery:
         assert response.status_code == 404
         assert "not found" in response.json()["detail"]
 
-    @patch("app.api.v1.queries.execute_query")
+    @patch("app.api.v1.queries.execute_query_with_service")
     def test_execute_sql_query_validation_error(self, mock_execute, client, sample_connection):
         """Test query execution with SQL validation error."""
         # Mock validation error
@@ -167,7 +167,7 @@ class TestExecuteSqlQuery:
         assert response.status_code == 400
         assert "Only SELECT queries are allowed" in response.json()["detail"]
 
-    @patch("app.api.v1.queries.execute_query")
+    @patch("app.api.v1.queries.execute_query_with_service")
     def test_execute_sql_query_execution_error(self, mock_execute, client, sample_connection):
         """Test query execution with database error."""
         # Mock execution error
@@ -182,7 +182,7 @@ class TestExecuteSqlQuery:
         assert "Query execution failed" in response.json()["detail"]
         assert "Table does not exist" in response.json()["detail"]
 
-    @patch("app.api.v1.queries.execute_query")
+    @patch("app.api.v1.queries.execute_query_with_service")
     def test_execute_sql_query_empty_result(self, mock_execute, client, sample_connection):
         """Test query execution with empty result set."""
         # Mock empty result
@@ -352,10 +352,11 @@ class TestNaturalLanguageToSql:
         assert "explanation" in data
         assert "Show me all users" in data["explanation"]
 
-        # Verify generate_sql was called
+        # Verify generate_sql was called (db_type passed as third arg)
         mock_generate.assert_called_once_with(
             "Show me all users",
             sample_metadata,
+            DatabaseType.POSTGRESQL,
         )
 
     def test_natural_language_to_sql_database_not_found(self, client):

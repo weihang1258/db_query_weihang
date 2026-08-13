@@ -11,6 +11,7 @@ from app.services.query import (
     get_query_history,
 )
 from app.models.query import QueryHistory, QuerySource
+from app.models.database import DatabaseType
 from app.models.schemas import QueryResult, QueryColumn
 from app.services.sql_validator import SqlValidationError
 
@@ -52,10 +53,11 @@ class TestExecuteQuery:
         conn.fetch.return_value = [mock_row]
 
         # Mock get_connection_pool
-        with patch("app.services.query.get_connection_pool", return_value=pool):
+        with patch("app.services.connection_factory.get_connection_pool", return_value=pool):
             result = await execute_query(
                 session=test_session,
                 database_name="test_db",
+                db_type=DatabaseType.POSTGRESQL,
                 url="postgresql://localhost/test",
                 sql="SELECT * FROM users",
                 query_source=QuerySource.MANUAL,
@@ -87,6 +89,7 @@ class TestExecuteQuery:
             await execute_query(
                 session=test_session,
                 database_name="test_db",
+                db_type=DatabaseType.POSTGRESQL,
                 url="postgresql://localhost/test",
                 sql="INSERT INTO users VALUES (1, 'test')",
                 query_source=QuerySource.MANUAL,
@@ -108,11 +111,12 @@ class TestExecuteQuery:
         # Mock connection to raise error
         conn.fetch.side_effect = Exception("Database connection error")
 
-        with patch("app.services.query.get_connection_pool", return_value=pool):
+        with patch("app.services.connection_factory.get_connection_pool", return_value=pool):
             with pytest.raises(Exception) as exc_info:
                 await execute_query(
                     session=test_session,
                     database_name="test_db",
+                    db_type=DatabaseType.POSTGRESQL,
                     url="postgresql://localhost/test",
                     sql="SELECT * FROM users",
                     query_source=QuerySource.MANUAL,
@@ -140,10 +144,11 @@ class TestExecuteQuery:
         ]
         conn.fetch.return_value = mock_rows
 
-        with patch("app.services.query.get_connection_pool", return_value=pool):
+        with patch("app.services.connection_factory.get_connection_pool", return_value=pool):
             result = await execute_query(
                 session=test_session,
                 database_name="test_db",
+                db_type=DatabaseType.POSTGRESQL,
                 url="postgresql://localhost/test",
                 sql="SELECT * FROM users",
                 query_source=QuerySource.NATURAL_LANGUAGE,
@@ -162,10 +167,11 @@ class TestExecuteQuery:
         # Mock empty result
         conn.fetch.return_value = []
 
-        with patch("app.services.query.get_connection_pool", return_value=pool):
+        with patch("app.services.connection_factory.get_connection_pool", return_value=pool):
             result = await execute_query(
                 session=test_session,
                 database_name="test_db",
+                db_type=DatabaseType.POSTGRESQL,
                 url="postgresql://localhost/test",
                 sql="SELECT * FROM users WHERE id = -1",
                 query_source=QuerySource.MANUAL,

@@ -46,6 +46,7 @@ export const DatabaseSidebar: React.FC<DatabaseSidebarProps> = ({
 
   useEffect(() => {
     loadDatabases();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- run once on mount
   }, []);
 
   const loadDatabases = async () => {
@@ -58,7 +59,7 @@ export const DatabaseSidebar: React.FC<DatabaseSidebarProps> = ({
       if (!selectedDatabase && response.data.length > 0) {
         onSelectDatabase(response.data[0]?.name || "");
       }
-    } catch (error) {
+    } catch {
       message.error("Failed to load databases");
     } finally {
       setLoading(false);
