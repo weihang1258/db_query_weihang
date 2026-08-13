@@ -91,30 +91,46 @@ Content-Type: application/json
 /export-db-query dpi_policy3 json "查询所有用户"   # 支持自然语言
 ```
 
-### 3.2 命令执行流程（AI Agent 任务分解）
+### 3.2 执行机制（脚本化，减少 AI 决策）
 
-命令触发后，Claude Code 自动分解为以下子任务并协调执行：
-
-1. **解析请求**：从 `$ARGUMENTS` 提取数据库名、格式、查询文本
-2. **执行查询 + 导出**：调用后端 `/query/export` 接口（单次请求完成）
-3. **自然语言处理**：若查询是自然语言，先调用 `/query/natural` 转 SQL，再导出
-4. **校验与报告**：确认文件生成，报告路径和行数；失败时返回错误信息
+**命令文件本身只做一件事：把参数原样透传给脚本**，所有逻辑（参数解析、后端检查与启动、自然语言转 SQL、调用导出接口、文件命名保存、报告行数）全部由 `scripts/export_query.sh` 承担：
 
 ```
-用户输入：/export-db-query dpi_policy3 csv "查询 area_info 前5行"
-    │
-    ├─► 解析参数：db=dpi_policy3, format=csv, query="查询 area_info 前5行"
-    ├─► 判断为自然语言 → 调 /query/natural 转 SQL
-    │        └─► 生成: SELECT * FROM area_info LIMIT 5
-    ├─► 调 /query/export (sql, format=csv)
-    │        └─► 返回 CSV 文件内容
-    └─► 保存为 dpi_policy3_20260813_101607.csv 并报告
+命令文件 .claude/commands/export-db-query.md（仅 5 行）：
+    bash scripts/export_query.sh $ARGUMENTS
+
+├─► scripts/export_query.sh 负责全部逻辑：
+│       ├─► 解析参数：<database_name> [csv|json] <query>，format 缺省为 csv
+│       │     ├─► 第 2 参数是 csv/json → 作为格式，剩余参数用空格拼接为查询
+│       │     └─► 否则 → 格式缺省 csv，从第 2 参数起拼接为查询
+│       ├─► 后端健康检查：curl /health，不通则用 backend/.venv 启动 uvicorn
+│       ├─► 自然语言转 SQL：非 SELECT 语句（含 "查询"/"select" 之外的自然语言描述）
+│       │       自动调用 POST /query/natural 转换
+│       ├─► 调 POST /query/export 导出（单次请求完成）
+│       ├─► 保存为 <database_name>_<时间戳>.<format>（项目根目录）
+│       └─► 报告文件路径、行数、大小；失败时打印后端 detail 并退出码 1
 ```
 
-### 3.3 与 Cursor 的互补（作业练习点）
+设计要点：
 
-- **Cursor**：擅长快速迭代 UI 和代码生成——本功能的前端按钮、表格渲染用 Cursor 风格实现
-- **Claude Code**：擅长多步骤自动化流程——`/export-db-query` 命令把"查询+导出"封装为单一触发点，配合 Agent 拆解子任务
+1. **执行链路**：命令文件 → 一次 Bash 调用 `bash scripts/export_query.sh $ARGUMENTS`，`allowed-tools: Bash` 限制模型只调 Bash，模型不再逐步解析/决策。
+2. **参数透传**：`$ARGUMENTS` 按空格分词，命令文件不做解析；脚本把剩余参数用空格**重新拼接**为查询文本，因此自然语言描述中的空格可以保留（如 `查询 area_info 表前5行`）。
+3. **自然语言识别**：查询文本包含 `select`/`with`/`show`（不区分大小写）视为 SQL，直接导出；否则走 `/query/natural` 转 SQL 再导出。
+4. **后端自启**：探测 `http://localhost:8000/health`，不通则用项目 `backend/.venv` 的 Python 启动 uvicorn（端口 8000，日志 `/tmp/db_query_uvicorn.log`），无需手动 `make dev-backend`。
+5. **健壮性**：Windows 下脚本强制 `PYTHONUTF8=1`，避免中文自然语言被 GBK 转码破坏；错误信息清理 ANSI 颜色码。
+6. **退出码约定**：成功 0；参数不足/查询为空/请求过长/后端启动失败/NL2SQL 失败/导出失败 均非 0，错误信息打印到 stderr。
+
+### 3.3 使用示例
+
+| 形式 | 示例 | 说明 |
+|------|------|------|
+| SQL 直接导出 | `/export-db-query dpi_policy3 csv 'SELECT * FROM area_info'` | 外层单引号包 SQL |
+| SQL 无内部引号 | `/export-db-query dpi_policy3 csv 'SELECT id, house_id, hid, start_ip, end_ip FROM internal_house_iprange WHERE house_id = 150001 LIMIT 1000'` | 字符串字面量改数值比较，避免内部引号 |
+| 自然语言（默认 csv） | `/export-db-query dpi_policy3 csv 查询 area_info 表前5行` | 描述带空格无需引号 |
+| 自然语言导出 JSON | `/export-db-query dpi_policy3 json 查询 internal_house_iprange 表中机房id为150001的记录，只显示前5列数据` | 格式参数 json |
+| 省略格式 | `/export-db-query dpi_policy3 查询 area_info 表前5行` | format 缺省 csv |
+
+> 引号约定：SQL 含反引号（`` ` ``）时必须用**单引号**包裹整个 SQL（双引号内反引号会被 shell 命令替换）；SQL 内部有字符串字面量（`'xxx'`）时，要么改用数值/无引号比较，要么对内部单引号做 `'\''` 转义。纯自然语言描述不需要任何引号。
 
 ---
 
@@ -171,7 +187,8 @@ Content-Type: application/json
 
 | 文件 | 变更 |
 |------|------|
-| `.claude/commands/export-db-query.md` | **新增**：Claude Code 自定义命令 |
+| `.claude/commands/export-db-query.md` | **新增**：Claude Code 自定义命令，改为脚本化透传（`bash scripts/export_query.sh $ARGUMENTS`，`allowed-tools: Bash`） |
+| `scripts/export_query.sh` | **新增**：导出命令行脚本，承担全部逻辑（参数解析、后端自启、NL2SQL、导出、保存、报告） |
 
 ---
 
@@ -193,7 +210,12 @@ Content-Type: application/json
 - ✅ 中文数据（`芦淞区`）CSV/JSON 编码正确
 - ✅ 非法 SQL（`DROP TABLE`）被拒绝
 - ✅ 前端弹窗询问 → 选择格式 → 文件下载完整流程
-- ✅ `/export-db-query` 命令模拟执行成功
+- ✅ `/export-db-query` 命令脚本化后实测通过：
+  - SQL 导出 CSV（`SELECT ... FROM internal_house_iprange WHERE house_id = 150001`）→ 2 行
+  - 自然语言 + JSON（`查询 internal_house_iprange 表中机房id为150001的记录，只显示前5列数据`）→ NL2SQL → 2 行
+  - 自然语言 + 省略格式（`查询 area_info 表前5行`）→ 默认 csv → 5 行
+  - 非法格式（xml）/ 不存在的库 / 无参数 → 均非 0 退出码 + 明确错误信息
+  - 自然语言描述带空格可完整保留（参数重新拼接）
 
 > 注：项目原有部分测试（如 `TestExecuteSqlQuery`）失败，原因是测试 mock 旧版函数名 `app.api.v1.queries.execute_query`，而代码已重构为 `execute_query_with_service`——**这是项目原有的测试-代码不匹配问题，与本次功能无关**。
 
