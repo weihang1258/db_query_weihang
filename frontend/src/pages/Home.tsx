@@ -94,28 +94,12 @@ export const Home: React.FC = () => {
       message.success(
         `Query executed - ${response.data.rowCount} rows in ${response.data.executionTimeMs}ms`
       );
-      promptExport(response.data.sql, response.data.rowCount);
     } catch (error: any) {
       message.error(error.response?.data?.detail || "Query execution failed");
       setQueryResult(null);
     } finally {
       setExecuting(false);
     }
-  };
-
-  const promptExport = (sqlToExport: string, rowCount: number) => {
-    if (rowCount === 0) return;
-    Modal.confirm({
-      title: "Export Query Results?",
-      icon: <ExclamationCircleOutlined />,
-      content: `Query returned ${rowCount.toLocaleString()} rows. Would you like to export the results to a file?`,
-      okText: "Export as CSV",
-      cancelText: "Export as JSON",
-      okButtonProps: { icon: <FileTextOutlined /> },
-      cancelButtonProps: { icon: <TableOutlined /> },
-      onOk: () => serverExport("csv", undefined, sqlToExport),
-      onCancel: () => serverExport("json", undefined, sqlToExport),
-    });
   };
 
   const handleExecuteAndExport = async (format: "csv" | "json") => {
