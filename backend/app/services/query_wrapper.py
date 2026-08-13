@@ -17,6 +17,7 @@ async def execute_query_with_service(
     url: str,
     sql: str,
     query_source: QuerySource = QuerySource.MANUAL,
+    limit: int = 1000,
 ) -> QueryResult:
     """
     Execute SQL query using new database service.
@@ -28,6 +29,7 @@ async def execute_query_with_service(
         url: Database connection URL
         sql: SQL query string
         query_source: Source of the query (manual or natural language)
+        limit: Maximum number of rows to return (default: 1000)
 
     Returns:
         QueryResult with columns, rows, and metadata
@@ -43,7 +45,7 @@ async def execute_query_with_service(
             name=database_name,
             url=url,
             sql=sql,
-            limit=1000,
+            limit=limit,
         )
 
         # Convert adapter result to API schema

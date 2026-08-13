@@ -490,3 +490,103 @@ class TestQueryHistoryEntry:
         assert entry.error_message == "Table not found"
         assert entry.row_count is None
         assert entry.query_source == "natural_language"
+
+
+class TestExportQueryResult:
+    """Test query result export endpoint."""
+
+    @patch("app.api.v1.queries.execute_query_with_service")
+    def test_export_csv_success(self, mock_execute, client, sample_connection):
+        """Test successful CSV export."""
+        mock_execute.return_value = QueryResult(
+            columns=[
+                QueryColumn(name="id", dataType="integer"),
+                QueryColumn(name="name", dataType="character varying"),
+            ],
+            rows=[
+                {"id": 1, "name": "Alice"},
+                {"id": 2, "name": "Bob"},
+            ],
+            rowCount=2,
+            executionTimeMs=10,
+            sql="SELECT * FROM users",
+        )
+
+        response = client.post(
+            "/api/v1/dbs/test_db/query/export",
+            json={"sql": "SELECT * FROM users", "format": "csv"},
+        )
+
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("text/csv")
+        assert "attachment" in response.headers["content-disposition"]
+        assert response.text.startswith("id,name\r\n") or response.text.startswith("id,name\n")
+        assert "Alice" in response.text
+
+        # Verify larger limit is used for export
+        call_args = mock_execute.call_args
+        assert call_args.kwargs["limit"] == 100000
+
+    @patch("app.api.v1.queries.execute_query_with_service")
+    def test_export_json_success(self, mock_execute, client, sample_connection):
+        """Test successful JSON export."""
+        mock_execute.return_value = QueryResult(
+            columns=[
+                QueryColumn(name="id", dataType="integer"),
+                QueryColumn(name="name", dataType="character varying"),
+            ],
+            rows=[{"id": 1, "name": "Alice"}],
+            rowCount=1,
+            executionTimeMs=10,
+            sql="SELECT * FROM users",
+        )
+
+        response = client.post(
+            "/api/v1/dbs/test_db/query/export",
+            json={"sql": "SELECT * FROM users", "format": "json"},
+        )
+
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("application/json")
+        assert '"id": 1' in response.text
+        assert '"name": "Alice"' in response.text
+
+    def test_export_invalid_format(self, client, sample_connection):
+        """Test export with unsupported format."""
+        response = client.post(
+            "/api/v1/dbs/test_db/query/export",
+            json={"sql": "SELECT * FROM users", "format": "xml"},
+        )
+
+        assert response.status_code == 400
+        assert "Unsupported format" in response.json()["detail"]
+
+    def test_export_database_not_found(self, client):
+        """Test export when database doesn't exist."""
+        response = client.post(
+            "/api/v1/dbs/nonexistent/query/export",
+            json={"sql": "SELECT * FROM users", "format": "csv"},
+        )
+
+        assert response.status_code == 404
+        assert "not found" in response.json()["detail"]
+
+    @patch("app.api.v1.queries.execute_query_with_service")
+    def test_export_custom_limit(self, mock_execute, client, sample_connection):
+        """Test export with custom row limit."""
+        mock_execute.return_value = QueryResult(
+            columns=[QueryColumn(name="id", dataType="integer")],
+            rows=[{"id": 1}],
+            rowCount=1,
+            executionTimeMs=10,
+            sql="SELECT * FROM users",
+        )
+
+        response = client.post(
+            "/api/v1/dbs/test_db/query/export",
+            json={"sql": "SELECT * FROM users", "format": "csv", "limit": 5000},
+        )
+
+        assert response.status_code == 200
+        call_args = mock_execute.call_args
+        assert call_args.kwargs["limit"] == 5000

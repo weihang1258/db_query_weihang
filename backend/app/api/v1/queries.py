@@ -1,7 +1,10 @@
 """Query execution API endpoints."""
 
 import json
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
 from sqlmodel import Session, select
 from typing import List
 from app.database import get_session
@@ -19,8 +22,23 @@ from app.services.query import get_query_history
 from app.services.sql_validator import SqlValidationError
 from app.services.nl2sql import nl2sql_service
 from app.services.metadata import get_cached_metadata
+from app.services.export_service import format_csv, format_json
 
 router = APIRouter(prefix="/api/v1/dbs", tags=["queries"])
+
+
+class ExportInput(BaseModel):
+    """Input schema for exporting query results."""
+
+    sql: str = Field(..., min_length=1, description="SQL SELECT query to execute")
+    format: str = Field(default="csv", description="Export format: csv or json")
+    limit: int = Field(default=100000, ge=1, le=1000000, description="Maximum rows to export")
+
+
+def _export_filename(name: str, export_format: str) -> str:
+    """Build a timestamped export filename."""
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    return f"{name}_{timestamp}.{export_format}"
 
 
 def to_history_entry(history) -> QueryHistoryEntry:
@@ -90,7 +108,84 @@ async def execute_sql_query(
         )
 
 
-@router.get("/{name}/history", response_model=List[QueryHistoryEntry])
+@router.post("/{name}/query/export")
+async def export_query_result(
+    name: str,
+    input_data: ExportInput,
+    session: Session = Depends(get_session),
+) -> StreamingResponse:
+    """
+    Execute a SQL query and return results as a downloadable CSV or JSON file.
+
+    Args:
+        name: Database connection name
+        input_data: Export input with SQL, format, and optional row limit
+        session: Database session
+
+    Returns:
+        StreamingResponse with file content and download headers
+
+    Raises:
+        HTTPException: If connection not found, SQL invalid, or execution fails
+    """
+    # Get connection
+    statement = select(DatabaseConnection).where(
+        DatabaseConnection.name == name
+    )
+    connection = session.exec(statement).first()
+
+    if not connection:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Database connection '{name}' not found",
+        )
+
+    export_format = input_data.format.lower()
+    if export_format not in ("csv", "json"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unsupported format '{input_data.format}'. Use 'csv' or 'json'.",
+        )
+
+    # Execute query with a larger row limit for export
+    try:
+        result = await execute_query_with_service(
+            session,
+            name,
+            connection.db_type,
+            connection.url,
+            input_data.sql,
+            QuerySource.EXPORT,
+            limit=input_data.limit,
+        )
+    except SqlValidationError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Query execution failed: {str(e)}",
+        )
+
+    # Format content
+    if export_format == "csv":
+        content = format_csv(result.columns, result.rows)
+        media_type = "text/csv; charset=utf-8"
+    else:
+        content = format_json(result.rows)
+        media_type = "application/json; charset=utf-8"
+
+    filename = _export_filename(name, export_format)
+
+    return StreamingResponse(
+        iter([content]),
+        media_type=media_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+        },
+    )
 async def get_query_history_for_database(
     name: str,
     limit: int = 50,

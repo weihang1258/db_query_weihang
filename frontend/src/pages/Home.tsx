@@ -94,12 +94,28 @@ export const Home: React.FC = () => {
       message.success(
         `Query executed - ${response.data.rowCount} rows in ${response.data.executionTimeMs}ms`
       );
+      promptExport(response.data.sql, response.data.rowCount);
     } catch (error: any) {
       message.error(error.response?.data?.detail || "Query execution failed");
       setQueryResult(null);
     } finally {
       setExecuting(false);
     }
+  };
+
+  const promptExport = (sqlToExport: string, rowCount: number) => {
+    if (rowCount === 0) return;
+    Modal.confirm({
+      title: "Export Query Results?",
+      icon: <ExclamationCircleOutlined />,
+      content: `Query returned ${rowCount.toLocaleString()} rows. Would you like to export the results to a file?`,
+      okText: "Export as CSV",
+      cancelText: "Export as JSON",
+      okButtonProps: { icon: <FileTextOutlined /> },
+      cancelButtonProps: { icon: <TableOutlined /> },
+      onOk: () => serverExport("csv", undefined, sqlToExport),
+      onCancel: () => serverExport("json", undefined, sqlToExport),
+    });
   };
 
   const handleExecuteAndExport = async (format: "csv" | "json") => {
@@ -118,11 +134,8 @@ export const Home: React.FC = () => {
       message.success(
         `Query executed - ${response.data.rowCount} rows in ${response.data.executionTimeMs}ms`
       );
-      if (format === "csv") {
-        exportToCSV();
-      } else {
-        exportToJSON();
-      }
+      // Server-side export with the executed SQL (supports full dataset)
+      await serverExport(format, undefined, sql.trim());
     } catch (error: any) {
       message.error(error.response?.data?.detail || "Query execution failed");
       setQueryResult(null);
@@ -168,6 +181,34 @@ export const Home: React.FC = () => {
     }
   };
 
+  const serverExport = async (format: "csv" | "json", limit?: number, sqlOverride?: string) => {
+    const sqlToExport = sqlOverride || queryResult?.sql;
+    if (!selectedDatabase || !sqlToExport) {
+      message.warning("No query result to export");
+      return;
+    }
+
+    try {
+      const response = await apiClient.post(
+        `/api/v1/dbs/${selectedDatabase}/query/export`,
+        { sql: sqlToExport, format, limit: limit ?? 100000 },
+        { responseType: "blob" }
+      );
+      // Trigger browser download from the blob
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement("a");
+      const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, -5);
+      link.href = url;
+      link.download = `${selectedDatabase}_${timestamp}.${format}`;
+      link.click();
+      window.URL.revokeObjectURL(url);
+      message.success(`Exported query results to ${format.toUpperCase()}`);
+    } catch (error: any) {
+      const errorMsg = error.response?.data?.detail || `Export to ${format.toUpperCase()} failed`;
+      message.error(errorMsg);
+    }
+  };
+
   const handleExportCSV = () => {
     if (!queryResult || queryResult.rows.length === 0) {
       message.warning("No data to export");
@@ -180,44 +221,11 @@ export const Home: React.FC = () => {
         title: "Large Dataset Warning",
         icon: <ExclamationCircleOutlined />,
         content: `You are about to export ${queryResult.rowCount.toLocaleString()} rows. This may take a while and consume memory. Continue?`,
-        onOk: () => exportToCSV(),
+        onOk: () => serverExport("csv"),
       });
     } else {
-      exportToCSV();
+      serverExport("csv");
     }
-  };
-
-  const exportToCSV = () => {
-    if (!queryResult) return;
-
-    // Generate CSV content
-    const headers = queryResult.columns.map((col) => col.name);
-    const csvRows = [headers.join(",")];
-
-    queryResult.rows.forEach((row) => {
-      const values = headers.map((header) => {
-        const value = row[header];
-        // Handle null/undefined
-        if (value === null || value === undefined) return "";
-        // Escape quotes and wrap in quotes if contains comma or quote
-        const stringValue = String(value);
-        if (stringValue.includes(",") || stringValue.includes('"') || stringValue.includes("\n")) {
-          return `"${stringValue.replace(/"/g, '""')}"`;
-        }
-        return stringValue;
-      });
-      csvRows.push(values.join(","));
-    });
-
-    const csvContent = csvRows.join("\n");
-    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-    const link = document.createElement("a");
-    const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, -5);
-    link.href = URL.createObjectURL(blob);
-    link.download = `${selectedDatabase}_${timestamp}.csv`;
-    link.click();
-    URL.revokeObjectURL(link.href);
-    message.success(`Exported ${queryResult.rowCount} rows to CSV`);
   };
 
   const handleExportJSON = () => {
@@ -232,25 +240,11 @@ export const Home: React.FC = () => {
         title: "Large Dataset Warning",
         icon: <ExclamationCircleOutlined />,
         content: `You are about to export ${queryResult.rowCount.toLocaleString()} rows. This may take a while and consume memory. Continue?`,
-        onOk: () => exportToJSON(),
+        onOk: () => serverExport("json"),
       });
     } else {
-      exportToJSON();
+      serverExport("json");
     }
-  };
-
-  const exportToJSON = () => {
-    if (!queryResult) return;
-
-    const jsonContent = JSON.stringify(queryResult.rows, null, 2);
-    const blob = new Blob([jsonContent], { type: "application/json;charset=utf-8;" });
-    const link = document.createElement("a");
-    const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, -5);
-    link.href = URL.createObjectURL(blob);
-    link.download = `${selectedDatabase}_${timestamp}.json`;
-    link.click();
-    URL.revokeObjectURL(link.href);
-    message.success(`Exported ${queryResult.rowCount} rows to JSON`);
   };
 
   const tableColumns =
