@@ -13,7 +13,7 @@
 |------|------|
 | 导出格式支持 | CSV、JSON 两种格式 |
 | 自动化流程 | Claude Code 自定义命令 `/export-db-query`，一键"查询 + 导出" |
-| 用户交互 | 查询后弹窗询问是否导出；界面按钮一键导出 |
+| 用户交互 | 界面按钮一键导出（EXEC2CSV / EXEC2JSON / 结果卡片导出） |
 | 数据完整性 | 服务端导出，突破原有 1000 行限制，支持完整数据集 |
 
 ---
@@ -37,17 +37,19 @@
 │  前端 React  │      │  FastAPI 后端      │      │  MySQL / PostgreSQL   │
 │  (Home.tsx)  │ ───► │  /query/export    │ ───► │  数据库               │
 │              │      │  └ export_service │      │                      │
-│  按钮/弹窗    │ ◄─── │  └ query_wrapper  │ ◄─── │                      │
+│  EXEC2CSV/   │ ◄─── │  └ query_wrapper  │ ◄─── │                      │
+│  EXEC2JSON   │      │  └ sql_validator  │      │                      │
 └─────────────┘      └──────────────────┘      └──────────────────────┘
 ```
 
-**后端新增 3 个组件：**
+**后端新增组件：**
 
 | 文件 | 职责 |
 |------|------|
 | `app/services/export_service.py` | 数据格式化：CSV（RFC 4180 转义）、JSON（pretty print） |
 | `app/api/v1/queries.py` → `POST /{name}/query/export` | 导出接口：执行查询 + 返回文件下载 |
 | `app/models/query.py` → `QuerySource.EXPORT` | 查询来源标记（历史记录区分导出查询） |
+| `scripts/export_query.sh` | 命令行导出脚本（自动化命令的实际执行体） |
 
 **关键设计点：**
 
@@ -96,7 +98,7 @@ Content-Type: application/json
 **命令文件本身只做一件事：把参数原样透传给脚本**，所有逻辑（参数解析、后端检查与启动、自然语言转 SQL、调用导出接口、文件命名保存、报告行数）全部由 `scripts/export_query.sh` 承担：
 
 ```
-命令文件 .claude/commands/export-db-query.md（仅 5 行）：
+命令文件 `.claude/commands/export-db-query.md`（极简，核心仅一条 Bash 指令）：
     bash scripts/export_query.sh $ARGUMENTS
 
 ├─► scripts/export_query.sh 负责全部逻辑：
@@ -131,22 +133,27 @@ Content-Type: application/json
 | 省略格式 | `/export-db-query dpi_policy3 查询 area_info 表前5行` | format 缺省 csv |
 
 > 引号约定：SQL 含反引号（`` ` ``）时必须用**单引号**包裹整个 SQL（双引号内反引号会被 shell 命令替换）；SQL 内部有字符串字面量（`'xxx'`）时，要么改用数值/无引号比较，要么对内部单引号做 `'\''` 转义。纯自然语言描述不需要任何引号。
+>
+> 格式参数边界：脚本只把**恰好为 `csv` 或 `json`** 的第 2 参数识别为格式；其他值（如 `xml`、`xlsx`）会被当作查询的一部分拼接，最终由**后端接口**校验并返回 400（`Unsupported format`）。因此省略格式（第 2 参数直接是查询）与显式格式（第 2 参数是 `csv`/`json`）都能正确工作。
 
 ---
 
 ## 4. 用户交互设计
 
-### 4.1 AI 主动询问（弹窗影响体验，该功能已经去掉）
+### 4.1 查询后主动询问（已评估并移除）
 
-执行查询成功后，前端自动弹窗询问：
+早期版本曾在查询成功后自动弹窗询问是否导出：
 
-> **Export Query Results?**
-> Query returned 3214 rows. Would you like to export the results to a file?
-> [Export as CSV] [Export as JSON]
+> ~~**Export Query Results?**~~
+> ~~Query returned 3214 rows. Would you like to export the results to a file?~~
+> ~~[Export as CSV] [Export as JSON]~~
 
-- 点击 **Export as CSV** → 调后端导出接口 → 浏览器下载 CSV 文件
-- 点击 **Export as JSON** → 同理下载 JSON 文件
-- 关闭弹窗则跳过，不打扰用户
+**评估结论：该弹窗已移除**。原因：
+
+- 每次查询都弹窗会**打断查询体验**，尤其高频查询场景
+- 用户若需要导出，已有更直接的方式（EXEC2CSV/EXEC2JSON 按钮、结果卡片导出按钮）
+
+**保留的交互原则**：导出由**用户主动触发**，而非 AI 强提示；如需 AI 引导，可在自然语言对话中提出（如"把刚才的结果导出成 csv"）。
 
 ### 4.2 一键按钮（EXEC2CSV / EXEC2JSON）
 
@@ -181,7 +188,7 @@ Content-Type: application/json
 
 | 文件 | 变更 |
 |------|------|
-| `frontend/src/pages/Home.tsx` | 新增 `serverExport`、`promptExport`、`handleExecuteAndExport`；升级 EXPORT 按钮为服务端导出；新增 EXEC2CSV/EXEC2JSON 按钮 |
+| `frontend/src/pages/Home.tsx` | 新增 `serverExport`、`handleExecuteAndExport`；升级 EXPORT 按钮为服务端导出；新增 EXEC2CSV/EXEC2JSON 按钮 |
 
 ### 自动化
 
